@@ -3,12 +3,13 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"log"
+	"io/ioutil"
 	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
+	"text/template"
 
 	"github.com/ChimeraCoder/anaconda"
 )
@@ -26,7 +27,10 @@ func setupTwitterApi() *anaconda.TwitterApi {
 	return anaconda.NewTwitterApi(ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
 }
 
+const fetch int = 10
+
 func main() {
+
 	// setup catching of SIGINT and SIGTERM signals
 	var done bool
 	sigs := make(chan os.Signal, 1)
@@ -45,12 +49,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer f.Close()
-
 	w := bufio.NewWriter(f)
 
 	api := setupTwitterApi()
-
-	const fetch int = 10
 
 	// fetch tweets in bunches of 10
 	v := url.Values{}
@@ -58,31 +59,54 @@ func main() {
 
 	var fetchedTweets int
 
+	// initialize tweet template
+	tmpl, err := ioutil.ReadFile("templates/tweet.tmpl")
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	template := template.Must(template.New("tweet").Parse(string(tmpl)))
+
 	for {
 		if done {
-			log.Printf("Exiting... Fetched %d tweets!\n", fetchedTweets)
-			w.Flush()
+			fmt.Printf("Exiting... Fetched %d tweets!\n", fetchedTweets)
+			if err := w.Flush(); err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
 			os.Exit(0)
 		}
 		timeline, err := api.GetUserTimeline(v)
 		if err != nil {
-			log.Printf("Error while fetching tweets from timeline: %s\n", err)
+			if err := w.Flush(); err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
+			fmt.Printf("Error while fetching tweets from timeline: %s\n", err)
+			os.Exit(1)
 		}
 
 		var lastTweetId int64
 		for _, tweet := range timeline {
-			fmt.Fprintf(w, "Id: %d Created: %s Text: %s\n",
-				tweet.Id,
-				tweet.CreatedAt,
-				tweet.Text,
-			)
+			template.Execute(w, tweet)
 			lastTweetId = tweet.Id
+		}
+		if len(timeline) > 0 {
+			lastTweetId = timeline[len(timeline)-1].Id
+		} else {
+			fmt.Printf("No more tweets left... Fetched %d tweets!\n", fetchedTweets)
+			break
 		}
 
 		v.Set("max_id", strconv.FormatInt(lastTweetId-1, 10))
-		fetchedTweets += fetch
+		fetchedTweets += len(timeline)
 		if fetchedTweets%50 == 0 {
-			log.Printf("Fetched %d tweets...\n", fetchedTweets)
+			fmt.Printf("Fetched %d tweets...\n", fetchedTweets)
+		}
+
+		if err := w.Flush(); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
 		}
 	}
 }
