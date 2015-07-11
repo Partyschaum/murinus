@@ -27,8 +27,6 @@ func setupTwitterApi() *anaconda.TwitterApi {
 	return anaconda.NewTwitterApi(ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
 }
 
-const fetch int = 10
-
 func flushWriter(w *bufio.Writer) {
 	if err := w.Flush(); err != nil {
 		fmt.Println(err)
@@ -36,8 +34,39 @@ func flushWriter(w *bufio.Writer) {
 	}
 }
 
-func main() {
+func createFile(file string) *os.File {
+	f, err := os.Create(file)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	return f
+}
 
+func getTweetTemplate() *template.Template {
+	tmpl, err := ioutil.ReadFile("templates/tweet.tmpl")
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	return template.Must(template.New("tweet").Parse(string(tmpl)))
+}
+
+func writeTimeline(w *bufio.Writer, timeline []anaconda.Tweet) (int64, error) {
+	var lastTweetId int64
+	t := getTweetTemplate()
+	for _, tweet := range timeline {
+		lastTweetId = tweet.Id
+		if err := t.Execute(w, tweet); err != nil {
+			return lastTweetId, err
+		}
+	}
+	return lastTweetId, nil
+}
+
+const fetch int = 10
+
+func main() {
 	// setup catching of SIGINT and SIGTERM signals
 	var done bool
 	sigs := make(chan os.Signal, 1)
@@ -49,62 +78,46 @@ func main() {
 		done = true
 	}()
 
-	// open file for saving the timeline
-	f, err := os.Create("timeline.json")
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
+	f := createFile("timeline.json")
 	defer f.Close()
+
 	w := bufio.NewWriter(f)
 
 	api := setupTwitterApi()
 
-	// fetch tweets in bunches of 10
+	var fetchedTweets int
+
 	v := url.Values{}
 	v.Add("count", strconv.Itoa(fetch))
 
-	var fetchedTweets int
-
-	// initialize tweet template
-	tmpl, err := ioutil.ReadFile("templates/tweet.tmpl")
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-	template := template.Must(template.New("tweet").Parse(string(tmpl)))
-
 	for {
 		if done {
-			fmt.Printf("Exiting... Fetched %d tweets!\n", fetchedTweets)
+			fmt.Printf("\nFetched %d tweets!\n", fetchedTweets)
 			flushWriter(w)
 			os.Exit(0)
 		}
+
 		timeline, err := api.GetUserTimeline(v)
 		if err != nil {
 			flushWriter(w)
-			fmt.Printf("Error while fetching tweets from timeline: %s\n", err)
+			fmt.Println(err)
 			os.Exit(1)
 		}
 
-		var lastTweetId int64
-		for _, tweet := range timeline {
-			template.Execute(w, tweet)
-			lastTweetId = tweet.Id
+		lastTweetId, err := writeTimeline(w, timeline)
+		if err != nil {
+			flushWriter(w)
+			fmt.Println(err)
+			os.Exit(1)
 		}
-		if len(timeline) > 0 {
-			lastTweetId = timeline[len(timeline)-1].Id
-		} else {
-			fmt.Printf("No more tweets left... Fetched %d tweets!\n", fetchedTweets)
+		v.Set("max_id", strconv.FormatInt(lastTweetId-1, 10))
+
+		fetchedTweets += len(timeline)
+		if len(timeline) == 0 {
+			fmt.Printf("\nNo more tweets left... Fetched %d tweets!\n", fetchedTweets)
 			break
 		}
 
-		v.Set("max_id", strconv.FormatInt(lastTweetId-1, 10))
-		fetchedTweets += len(timeline)
-		if fetchedTweets%50 == 0 {
-			fmt.Printf("Fetched %d tweets...\n", fetchedTweets)
-		}
-
-		flushWriter(w)
+		fmt.Print(".")
 	}
 }
