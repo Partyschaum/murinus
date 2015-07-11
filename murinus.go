@@ -29,6 +29,13 @@ func setupTwitterApi() *anaconda.TwitterApi {
 
 const fetch int = 10
 
+func flushWriter(w *bufio.Writer) {
+	if err := w.Flush(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+
 func main() {
 
 	// setup catching of SIGINT and SIGTERM signals
@@ -70,18 +77,12 @@ func main() {
 	for {
 		if done {
 			fmt.Printf("Exiting... Fetched %d tweets!\n", fetchedTweets)
-			if err := w.Flush(); err != nil {
-				fmt.Println(err)
-				os.Exit(1)
-			}
+			flushWriter(w)
 			os.Exit(0)
 		}
 		timeline, err := api.GetUserTimeline(v)
 		if err != nil {
-			if err := w.Flush(); err != nil {
-				fmt.Println(err)
-				os.Exit(1)
-			}
+			flushWriter(w)
 			fmt.Printf("Error while fetching tweets from timeline: %s\n", err)
 			os.Exit(1)
 		}
@@ -104,9 +105,6 @@ func main() {
 			fmt.Printf("Fetched %d tweets...\n", fetchedTweets)
 		}
 
-		if err := w.Flush(); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
+		flushWriter(w)
 	}
 }
