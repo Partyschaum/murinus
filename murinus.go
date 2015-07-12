@@ -2,12 +2,14 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"text/template"
 
@@ -64,9 +66,40 @@ func writeTimeline(w *bufio.Writer, timeline []anaconda.Tweet) (int64, error) {
 	return lastTweetId, nil
 }
 
-const fetch int = 10
+func parseArguments() {
+	flag.Int("user-id", 0, "The ID of the user for whom to return results for.")
+	flag.String("screen-name", "", "The screen name of the user for whom to return results for.")
+	flag.Int("since-id", 0, "Returns results with an ID greater than (that is, more recent than) the specified ID.")
+	flag.Int("max-id", 0, "Returns results with an ID less than (that is, older than) or equal to the specified ID.")
+	flag.Bool("trim-user", true, "When set to true each tweet returned in a timeline will include a user object including only the status authors numerical ID.")
+	flag.Bool("include-rts", true, "When set to false, the timeline will strip any native retweets. Note: If you’re using the trim parameter in conjunction with includerts, the retweets will still contain a full user object.")
+
+	flag.Int("count", defaultCount, "Specifies the number of tweets to try and retrieve, up to a maximum of 200 per distinct request.")
+
+	flag.Parse()
+}
+
+func getQueryParams() url.Values {
+	v := url.Values{}
+
+	// Apply defaults
+	v.Set("count", strconv.Itoa(defaultCount))
+	v.Set("trim_user", "true")
+
+	// Apply set flags
+	flag.Visit(func(f *flag.Flag) {
+		param := strings.Replace(f.Name, "-", "_", -1)
+		v.Set(param, fmt.Sprintf("%v", f.Value))
+	})
+
+	return v
+}
+
+const defaultCount int = 10
 
 func main() {
+	parseArguments()
+
 	// setup catching of SIGINT and SIGTERM signals
 	var done bool
 	sigs := make(chan os.Signal, 1)
@@ -87,8 +120,8 @@ func main() {
 
 	var fetchedTweets int
 
-	v := url.Values{}
-	v.Add("count", strconv.Itoa(fetch))
+	queryParams := getQueryParams()
+	fmt.Println(queryParams)
 
 	for {
 		if done {
@@ -97,7 +130,7 @@ func main() {
 			os.Exit(0)
 		}
 
-		timeline, err := api.GetUserTimeline(v)
+		timeline, err := api.GetUserTimeline(queryParams)
 		if err != nil {
 			flushWriter(w)
 			fmt.Println(err)
@@ -110,7 +143,7 @@ func main() {
 			fmt.Println(err)
 			os.Exit(1)
 		}
-		v.Set("max_id", strconv.FormatInt(lastTweetId-1, 10))
+		queryParams.Set("max_id", strconv.FormatInt(lastTweetId-1, 10))
 
 		fetchedTweets += len(timeline)
 		if len(timeline) == 0 {
