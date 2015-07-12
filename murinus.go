@@ -2,26 +2,84 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"net/url"
 	"os"
 	"os/signal"
+	"os/user"
+	"path"
 	"strconv"
 	"strings"
 	"syscall"
 	"text/template"
 
 	"github.com/ChimeraCoder/anaconda"
+	"github.com/go-ini/ini"
 )
 
-func setupTwitterApi() *anaconda.TwitterApi {
-	CONSUMER_KEY := os.Getenv("CONSUMER_KEY")
-	CONSUMER_SECRET := os.Getenv("CONSUMER_SECRET")
+const (
+	CONFIG_FILENAME     = ".murinus"
+	DEFAULT_COUNT   int = 10
+)
 
-	ACCESS_TOKEN := os.Getenv("ACCESS_TOKEN")
-	ACCESS_TOKEN_SECRET := os.Getenv("ACCESS_TOKEN_SECRET")
+var (
+	CONSUMER_KEY        string
+	CONSUMER_SECRET     string
+	ACCESS_TOKEN        string
+	ACCESS_TOKEN_SECRET string
+)
+
+func isConfigurationComplete() error {
+	if len(CONSUMER_KEY) == 0 || len(CONSUMER_SECRET) == 0 || len(ACCESS_TOKEN) == 0 || len(ACCESS_TOKEN_SECRET) == 0 {
+		return errors.New("Configuration not complete!")
+	}
+	return nil
+}
+
+func checkEnvironment() error {
+	CONSUMER_KEY = os.Getenv("CONSUMER_KEY")
+	CONSUMER_SECRET = os.Getenv("CONSUMER_SECRET")
+
+	ACCESS_TOKEN = os.Getenv("ACCESS_TOKEN")
+	ACCESS_TOKEN_SECRET = os.Getenv("ACCESS_TOKEN_SECRET")
+
+	return isConfigurationComplete()
+}
+
+func checkConfigFile() error {
+	usr, err := user.Current()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := ini.Load(path.Join(usr.HomeDir, CONFIG_FILENAME))
+	if err != nil {
+		return err
+	}
+
+	CONSUMER_KEY = cfg.Section("").Key("CONSUMER_KEY").String()
+	CONSUMER_SECRET = cfg.Section("").Key("CONSUMER_SECRET").String()
+
+	ACCESS_TOKEN = cfg.Section("").Key("ACCESS_TOKEN").String()
+	ACCESS_TOKEN_SECRET = cfg.Section("").Key("ACCESS_TOKEN_SECRET").String()
+
+	return isConfigurationComplete()
+}
+
+func setupTwitterApi() *anaconda.TwitterApi {
+	if err := checkEnvironment(); err != nil {
+		if err := checkConfigFile(); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		} else {
+			fmt.Println("Configuration read from configuration file.")
+		}
+	} else {
+		fmt.Println("Configuration read from environment.")
+	}
 
 	anaconda.SetConsumerKey(CONSUMER_KEY)
 	anaconda.SetConsumerSecret(CONSUMER_SECRET)
@@ -74,7 +132,7 @@ func parseArguments() {
 	flag.Bool("trim-user", true, "When set to true each tweet returned in a timeline will include a user object including only the status authors numerical ID.")
 	flag.Bool("include-rts", true, "When set to false, the timeline will strip any native retweets. Note: If you’re using the trim parameter in conjunction with includerts, the retweets will still contain a full user object.")
 
-	flag.Int("count", defaultCount, "Specifies the number of tweets to try and retrieve, up to a maximum of 200 per distinct request.")
+	flag.Int("count", DEFAULT_COUNT, "Specifies the number of tweets to try and retrieve, up to a maximum of 200 per distinct request.")
 
 	flag.Parse()
 }
@@ -83,7 +141,7 @@ func getQueryParams() url.Values {
 	v := url.Values{}
 
 	// Apply defaults
-	v.Set("count", strconv.Itoa(defaultCount))
+	v.Set("count", strconv.Itoa(DEFAULT_COUNT))
 	v.Set("trim_user", "true")
 
 	// Apply set flags
@@ -94,8 +152,6 @@ func getQueryParams() url.Values {
 
 	return v
 }
-
-const defaultCount int = 10
 
 func main() {
 	parseArguments()
